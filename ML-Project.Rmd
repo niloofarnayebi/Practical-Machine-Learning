@@ -1,0 +1,138 @@
+---
+title: "Practical Machine Learning-Project"
+author: "Niloofar Nayebi"
+date: '2018-09-15'
+output: html_document
+---
+# Introduction 
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement to improve their health, to find patterns in their behavior, or etc.
+In this project six participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+The gole of this project is to predict the manner in which they did the exercise.The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har.
+
+# Creating enviroment
+```{r}
+library(caret)
+```
+
+# Getting and Cleaning Data
+```{r}
+trainUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+# Reading data and replacing the empty space and div0 by NA
+training_db <- read.csv(url(trainUrl), na.strings=c("NA","#DIV/0!",""))
+testing_db <- read.csv(url(testUrl), na.strings=c("NA","#DIV/0!",""))
+
+#str(training_db)
+#str(testing_db)
+
+colnames_train <- colnames(training_db)
+colnames_test <- colnames(testing_db)
+
+# Verify that the column names (excluding classe and problem_id) are identical in the training and test set.
+all.equal(colnames_train[1:length(colnames_train)-1], colnames_test[1:length(colnames_train)-1])
+```
+
+Because I want to be able to estimate the out-of-sample error, I randomly split the full training data (trainig_db) into a smaller training set (training) and a validation set (testing):
+```{r}
+#deviding train data set. 
+set.seed(10)
+inTrain <- createDataPartition(y=training_db$classe, p=0.7, list=F)
+training <- training_db[inTrain, ]
+testing <- training_db[-inTrain, ]
+
+
+# remove variables with nearly zero variance
+nzv <- nearZeroVar(training)
+training <- training[, -nzv]
+testing <- testing[, -nzv]
+```
+
+# Features 
+
+```{r}
+# remove variables that are almost always NA
+mostlyNA <- sapply(training, function(x) mean(is.na(x))) > 0.95
+training <- training[, mostlyNA==F]
+testing <- testing[, mostlyNA==F]
+
+# remove variables that don't make intuitive sense for prediction (X, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp), which happen to be the first five variables
+training <- training[, -(1:5)]
+testing <- testing[, -(1:5)]
+```
+
+# Model Building
+I will fit Random Forest model, and check it's performance for the first try. The model will be fit on "training" data set, and 3-fold cross-validation will be used to select optimal tuning parameters for the model.
+
+```{r}
+# instruct train to use 3-fold CV to select optimal tuning parameters
+fitControl <- trainControl(method="cv", number=3, verboseIter=F)
+
+# fit model 
+fit <- train(classe ~ ., data=training, method="rf", trControl=fitControl)
+```
+
+```{r}
+fit$finalModel
+```
+This model has 500 trees and tried 27 variable at each split.
+
+# Model Evaluation
+I use the fitted model to predict the “classe” in "testing" dataset, and compare the predicted versus the actual labels:
+
+```{r}
+# use model to predict classe in validation set (ptrain2)
+preds <- predict(fit, newdata=testing)
+
+# show confusion matrix to get estimate of out-of-sample error
+confusionMatrix(testing$classe, preds)
+```
+
+The accuracy is 99.8%, thus my predicted accuracy for the out-of-sample error is 0.2%. This model is performing pretty well therefore, we do not need to test other algorithms. 
+
+# Retreaining by selected model 
+I have built the model based on 70% of the training dataset. In order to get the most accurate prediction I'll train the model with the whole dataset. 
+
+```{r}
+# remove variables with nearly zero variance
+nzv <- nearZeroVar(training_db)
+training_db <- training_db[, -nzv]
+testing_db <- testing_db[, -nzv]
+
+# remove variables that are almost always NA
+mostlyNA <- sapply(training_db, function(x) mean(is.na(x))) > 0.95
+training_db <- training_db[, mostlyNA==F]
+testing_db <- testing_db[, mostlyNA==F]
+
+# remove variables that don't make intuitive sense for prediction (X, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp), which happen to be the first five variables
+training_db <- training_db[, -(1:5)]
+testing_db <- testing_db[, -(1:5)]
+
+# re-fit model using full training set (ptrain)
+fitControl <- trainControl(method="cv", number=3, verboseIter=F)
+fit <- train(classe ~ ., data = training_db, method="rf", trControl=fitControl)
+```
+
+
+# Predictions
+Here I use the model to predict the manner in which partisipant did the exercise. 
+
+```{r}
+# predict on test set
+preds <- predict(fit, newdata=testing_db)
+
+# convert predictions to character vector
+preds <- as.character(preds)
+
+# create function to write predictions to files
+pml_write_files <- function(x) {
+    n <- length(x)
+    for(i in 1:n) {
+        filename <- paste0("problem_id_", i, ".txt")
+        write.table(x[i], file=filename, quote=F, row.names=F, col.names=F)
+    }
+}
+
+# create prediction files to submit
+pml_write_files(preds)
+```
